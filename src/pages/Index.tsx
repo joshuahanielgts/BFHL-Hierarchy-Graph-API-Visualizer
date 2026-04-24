@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 // =============================================================================
-// Set VITE_API_URL in your Vercel environment variables dashboard.
-// e.g. VITE_API_URL=https://your-service.onrender.com
+// Backend: https://bfhl-hierarchy-graph-api-visualizer.onrender.com
 // =============================================================================
-const API_URL = `${import.meta.env.VITE_API_URL ?? ""}/bfhl`;
+const API_URL = "https://bfhl-hierarchy-graph-api-visualizer.onrender.com/bfhl";
 
 // -----------------------------------------------------------------------------
 // Types
