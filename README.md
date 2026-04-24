@@ -20,9 +20,9 @@
 |---|---|
 | **Name** | J Joshua Haniel |
 | **User ID** | `jjoshuahaniel_09012006` |
-| **Email** | jj9568@srmist.edu.in |
-| **Roll Number** | RA2311003040056 |
-| **Institution** | SRM Institute of Science and Technology (CSE) |
+| **Email** | jj9568@srmist.edu.in or j06haniel@gmail.com |
+| **SRM Roll Number** | RA2311003040056 |
+| **Institution** | SRM Institute of Science and Technology, Vadapalani Campus |
 
 ---
 
