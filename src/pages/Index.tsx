@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 // =============================================================================
 // Update this constant with your deployed endpoint.
@@ -36,6 +36,105 @@ type ValidationState =
   | { status: "valid"; count: number }
   | { status: "invalid-array"; reason: string }
   | { status: "invalid-json"; reason: string };
+
+const STORAGE_KEYS = {
+  allCollapsed: "bfhl:allCollapsed",
+  logFilter: "bfhl:logFilter",
+  copied: "bfhl:copied",
+} as const;
+
+const ASCII_VIRTUALIZATION_THRESHOLD = 180;
+const ASCII_ROW_HEIGHT = 24;
+const ASCII_OVERSCAN = 8;
+const ASCII_MAX_VIEWPORT_HEIGHT = 384;
+
+function readStoredBoolean(key: string, fallback = false): boolean {
+  if (typeof window === "undefined") return fallback;
+  const raw = window.localStorage.getItem(key);
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return fallback;
+}
+
+function readStoredLogFilter(fallback: LogFilter): LogFilter {
+  if (typeof window === "undefined") return fallback;
+  const raw = window.localStorage.getItem(STORAGE_KEYS.logFilter);
+  if (raw === "all" || raw === "invalid" || raw === "duplicate") {
+    return raw;
+  }
+  return fallback;
+}
+
+function writeStorage(key: string, value: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore quota and privacy mode errors.
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function renderHighlightedLine(line: string, query: string) {
+  if (!query) return line;
+  const matcher = new RegExp(`(${escapeRegExp(query)})`, "ig");
+
+  return line.split(matcher).map((part, idx) => {
+    if (part.toLowerCase() === query.toLowerCase()) {
+      return (
+        <mark
+          key={`${part}-${idx}`}
+          className="bg-neon-amber/25 text-neon-amber text-glow-amber rounded-sm px-0.5"
+        >
+          {part}
+        </mark>
+      );
+    }
+    return <span key={`${part}-${idx}`}>{part}</span>;
+  });
+}
+
+function analyzeTreeMetrics(root: string, tree: Record<string, unknown>) {
+  const wrapped: Record<string, unknown> = { [root]: tree };
+  let edgeCount = 0;
+  let cycleCount = 0;
+
+  const walk = (node: Record<string, unknown>, ancestors: Set<string>) => {
+    Object.entries(node).forEach(([label, child]) => {
+      if (ancestors.has(label)) {
+        cycleCount += 1;
+        return;
+      }
+      if (!child || typeof child !== "object") return;
+
+      const childObject = child as Record<string, unknown>;
+      const childEntries = Object.entries(childObject);
+      edgeCount += childEntries.length;
+
+      const nextAncestors = new Set(ancestors);
+      nextAncestors.add(label);
+      walk(childObject, nextAncestors);
+    });
+  };
+
+  walk(wrapped, new Set<string>());
+  return { edgeCount, cycleCount };
+}
+
+function downloadFile(fileName: string, content: string, mimeType: string): void {
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
 function validateInput(raw: string): ValidationState {
   const trimmed = raw.trim();
@@ -171,6 +270,82 @@ function LogPanel({
   );
 }
 
+function AsciiTreeLines({
+  lines,
+  query,
+  forceVirtualization,
+}: {
+  lines: string[];
+  query: string;
+  forceVirtualization: boolean;
+}) {
+  const [scrollTop, setScrollTop] = useState(0);
+
+  useEffect(() => {
+    setScrollTop(0);
+  }, [lines]);
+
+  if (lines.length === 0) {
+    return (
+      <div className="relative text-sm leading-6 text-muted-foreground whitespace-pre overflow-auto font-mono max-h-96">
+        // EMPTY TREE
+      </div>
+    );
+  }
+
+  if (!forceVirtualization) {
+    return (
+      <div className="relative text-sm leading-6 text-neon-cyan text-glow-cyan whitespace-pre overflow-auto font-mono max-h-96">
+        {lines.map((line, idx) => (
+          <div key={`${line}-${idx}`} className="min-h-6">
+            {renderHighlightedLine(line, query)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const viewportHeight = Math.min(
+    ASCII_MAX_VIEWPORT_HEIGHT,
+    Math.max(ASCII_ROW_HEIGHT * 6, lines.length * ASCII_ROW_HEIGHT),
+  );
+  const totalHeight = lines.length * ASCII_ROW_HEIGHT;
+  const startIndex = Math.max(
+    0,
+    Math.floor(scrollTop / ASCII_ROW_HEIGHT) - ASCII_OVERSCAN,
+  );
+  const visibleCount =
+    Math.ceil(viewportHeight / ASCII_ROW_HEIGHT) + ASCII_OVERSCAN * 2;
+  const endIndex = Math.min(lines.length, startIndex + visibleCount);
+
+  return (
+    <div
+      className="relative overflow-auto font-mono text-sm leading-6 text-neon-cyan text-glow-cyan"
+      style={{ height: `${viewportHeight}px` }}
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+    >
+      <div className="relative min-w-max" style={{ height: `${totalHeight}px` }}>
+        {lines.slice(startIndex, endIndex).map((line, localIdx) => {
+          const rowIndex = startIndex + localIdx;
+          return (
+            <div
+              key={`${rowIndex}-${line}`}
+              className="absolute left-0 right-0 whitespace-pre"
+              style={{
+                top: `${rowIndex * ASCII_ROW_HEIGHT}px`,
+                height: `${ASCII_ROW_HEIGHT}px`,
+                lineHeight: `${ASCII_ROW_HEIGHT}px`,
+              }}
+            >
+              {renderHighlightedLine(line, query)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function HierarchyCard({
   h,
   index,
@@ -182,10 +357,28 @@ function HierarchyCard({
 }) {
   const ascii = useMemo(
     () => buildAsciiTree({ [h.root]: h.tree as Record<string, unknown> }),
-    [h],
+    [h.root, h.tree],
   );
   const [collapsed, setCollapsed] = useState(initialCollapsed);
-  const lineCount = ascii ? ascii.split("\n").filter(Boolean).length : 0;
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const asciiLines = useMemo(
+    () => (ascii ? ascii.split("\n").filter(Boolean) : []),
+    [ascii],
+  );
+  const lineCount = asciiLines.length;
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredLines = useMemo(() => {
+    if (!normalizedSearch) return asciiLines;
+    return asciiLines.filter((line) => line.toLowerCase().includes(normalizedSearch));
+  }, [asciiLines, normalizedSearch]);
+  const matchCount = normalizedSearch ? filteredLines.length : lineCount;
+  const metrics = useMemo(
+    () => analyzeTreeMetrics(h.root, h.tree as Record<string, unknown>),
+    [h.root, h.tree],
+  );
+  const cycleCount = Math.max(metrics.cycleCount, h.has_cycle ? 1 : 0);
+  const shouldVirtualize = lineCount > ASCII_VIRTUALIZATION_THRESHOLD;
 
   return (
     <div className="relative bg-card/70 backdrop-blur-sm rounded-md glow-cyan overflow-hidden">
@@ -209,8 +402,23 @@ function HierarchyCard({
         <div className="text-xs text-muted-foreground">
           LINES :: <span className="text-foreground">{lineCount}</span>
         </div>
+        <div className="text-xs text-muted-foreground">
+          MATCHES :: <span className={normalizedSearch ? "text-neon-amber text-glow-amber" : "text-foreground"}>{matchCount}</span>
+        </div>
+        <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
+          <label htmlFor={`tree-search-${index}`} className="text-[10px] tracking-[0.2em] text-muted-foreground">
+            SEARCH
+          </label>
+          <input
+            id={`tree-search-${index}`}
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="FIND NODE"
+            className="w-full sm:w-52 bg-background/60 border border-border focus:border-neon-cyan focus:outline-none rounded px-2 py-1 text-[11px] text-neon-cyan"
+            aria-label={`Search nodes in hierarchy ${index + 1}`}
+          />
         <div
-          className={`ml-auto text-[10px] tracking-[0.2em] px-2 py-1 rounded border ${
+          className={`text-[10px] tracking-[0.2em] px-2 py-1 rounded border ${
             h.has_cycle
               ? "border-neon-red text-neon-red text-glow-red animate-pulse-red"
               : "border-border text-muted-foreground"
@@ -218,20 +426,45 @@ function HierarchyCard({
         >
           HAS_CYCLE :: {h.has_cycle ? "TRUE" : "FALSE"}
         </div>
+        </div>
       </div>
       {collapsed ? (
         <div className="relative px-4 py-3 text-[11px] text-muted-foreground italic flex items-center gap-2">
           <span className="text-neon-cyan">…</span>
           <span>TREE COLLAPSED // {lineCount} NODES HIDDEN</span>
+          {normalizedSearch && (
+            <span className="sm:ml-auto text-neon-amber text-glow-amber">
+              FILTER ACTIVE :: {matchCount} MATCH{matchCount === 1 ? "" : "ES"}
+            </span>
+          )}
         </div>
       ) : (
         <div className="relative p-4">
           <div className="absolute inset-0 scanlines opacity-30 pointer-events-none" />
-          <pre className="relative text-sm leading-6 text-neon-cyan text-glow-cyan whitespace-pre overflow-auto font-mono max-h-96">
-            {ascii || "// EMPTY TREE"}
-          </pre>
+          {normalizedSearch && filteredLines.length === 0 ? (
+            <div className="relative text-sm text-neon-amber text-glow-amber italic px-1 py-2">
+              // NO MATCHES FOUND FOR "{searchTerm}"
+            </div>
+          ) : (
+            <AsciiTreeLines
+              lines={filteredLines}
+              query={normalizedSearch}
+              forceVirtualization={shouldVirtualize}
+            />
+          )}
         </div>
       )}
+      <div
+        className="px-4 py-2 border-t border-border/60 bg-background/30 text-[10px] tracking-[0.2em] text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1"
+        title="Computed from tree traversal and cycle flags"
+      >
+        <span>
+          EDGE_COUNT :: <span className="text-neon-cyan text-glow-cyan">{metrics.edgeCount}</span>
+        </span>
+        <span>
+          CYCLES_FOUND :: <span className={cycleCount > 0 ? "text-neon-red text-glow-red" : "text-foreground"}>{cycleCount}</span>
+        </span>
+      </div>
     </div>
   );
 }
@@ -303,12 +536,36 @@ const Index = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
-  const [logFilter, setLogFilter] = useState<LogFilter>("all");
-  const [copied, setCopied] = useState(false);
-  const [allCollapsed, setAllCollapsed] = useState(false);
+  const [logFilter, setLogFilter] = useState<LogFilter>(() => readStoredLogFilter("all"));
+  const [copied, setCopied] = useState(() => readStoredBoolean(STORAGE_KEYS.copied));
+  const [allCollapsed, setAllCollapsed] = useState(() => readStoredBoolean(STORAGE_KEYS.allCollapsed));
   const [collapseSignal, setCollapseSignal] = useState(0); // bump to remount cards
 
   const validation = useMemo(() => validateInput(input), [input]);
+  const filteredInvalidEntries = useMemo(() => {
+    if (!data) return [];
+    return logFilter === "all" || logFilter === "invalid"
+      ? (data.invalid_entries ?? [])
+      : [];
+  }, [data, logFilter]);
+  const filteredDuplicateEdges = useMemo(() => {
+    if (!data) return [];
+    return logFilter === "all" || logFilter === "duplicate"
+      ? (data.duplicate_edges ?? [])
+      : [];
+  }, [data, logFilter]);
+
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.logFilter, logFilter);
+  }, [logFilter]);
+
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.allCollapsed, String(allCollapsed));
+  }, [allCollapsed]);
+
+  useEffect(() => {
+    writeStorage(STORAGE_KEYS.copied, String(copied));
+  }, [copied]);
 
   const handleSubmit = async () => {
     setError(null);
@@ -366,10 +623,53 @@ const Index = () => {
     try {
       await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
     }
+  };
+
+  const handleDownloadLogs = (format: "json" | "txt") => {
+    if (!data) return;
+
+    const generatedAt = new Date().toISOString();
+    const safeStamp = generatedAt.replace(/[:.]/g, "-");
+
+    if (format === "json") {
+      const payload = {
+        filter: logFilter,
+        generated_at: generatedAt,
+        invalid_entries: filteredInvalidEntries,
+        duplicate_edges: filteredDuplicateEdges,
+      };
+      downloadFile(
+        `system-logs-${logFilter}-${safeStamp}.json`,
+        JSON.stringify(payload, null, 2),
+        "application/json",
+      );
+      return;
+    }
+
+    const textPayload = [
+      "BFHL SYSTEM LOG EXPORT",
+      `FILTER :: ${logFilter.toUpperCase()}`,
+      `GENERATED_AT :: ${generatedAt}`,
+      "",
+      "[INVALID_ENTRIES]",
+      ...(filteredInvalidEntries.length > 0
+        ? filteredInvalidEntries.map((entry, idx) => `${String(idx + 1).padStart(3, "0")}. ${entry}`)
+        : ["NONE"]),
+      "",
+      "[DUPLICATE_EDGES]",
+      ...(filteredDuplicateEdges.length > 0
+        ? filteredDuplicateEdges.map((entry, idx) => `${String(idx + 1).padStart(3, "0")}. ${entry}`)
+        : ["NONE"]),
+    ].join("\n");
+
+    downloadFile(
+      `system-logs-${logFilter}-${safeStamp}.txt`,
+      textPayload,
+      "text/plain",
+    );
   };
 
   const toggleAllTrees = () => {
@@ -413,11 +713,11 @@ const Index = () => {
 
       {/* ============================ INPUT ============================ */}
       <section className="mb-8 bg-card/70 backdrop-blur-sm rounded-md glow-cyan overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border/60 bg-background/40">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2 border-b border-border/60 bg-background/40">
           <div className="text-xs tracking-[0.25em] text-neon-cyan text-glow-cyan font-bold">
             // INPUT :: EDGE LIST (JSON ARRAY)
           </div>
-          <div className="text-[10px] text-muted-foreground">
+          <div className="text-[10px] text-muted-foreground max-w-full break-all">
             ENDPOINT :: <span className="text-foreground break-all">{API_URL}</span>
           </div>
         </div>
@@ -438,7 +738,7 @@ const Index = () => {
             <button
               onClick={handleSubmit}
               disabled={loading || validation.status !== "valid"}
-              className={`group relative inline-flex items-center gap-2 px-6 py-3 bg-background/80 border border-neon-red text-neon-red text-glow-red font-bold tracking-[0.2em] text-sm rounded transition-all
+              className={`group relative inline-flex w-full sm:w-auto justify-center items-center gap-2 px-6 py-3 bg-background/80 border border-neon-red text-neon-red text-glow-red font-bold tracking-[0.2em] text-sm rounded transition-all
                 hover:bg-neon-red/10 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed
                 glow-red animate-pulse-red`}
             >
@@ -459,7 +759,7 @@ const Index = () => {
               <button
                 onClick={handleRetry}
                 disabled={loading || validation.status !== "valid"}
-                className="inline-flex items-center gap-2 px-4 py-3 bg-background/80 border border-neon-amber text-neon-amber text-glow-amber font-bold tracking-[0.2em] text-xs rounded transition-all hover:bg-neon-amber/10 disabled:opacity-50 disabled:cursor-not-allowed glow-amber"
+                className="inline-flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-3 bg-background/80 border border-neon-amber text-neon-amber text-glow-amber font-bold tracking-[0.2em] text-xs rounded transition-all hover:bg-neon-amber/10 disabled:opacity-50 disabled:cursor-not-allowed glow-amber"
                 title="Retry the last request"
               >
                 <span>↻</span>
@@ -470,14 +770,14 @@ const Index = () => {
             <button
               onClick={handleClearConsole}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-4 py-3 bg-background/80 border border-border text-muted-foreground hover:text-neon-cyan hover:border-neon-cyan font-bold tracking-[0.2em] text-xs rounded transition-all disabled:opacity-50"
+              className="inline-flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-3 bg-background/80 border border-border text-muted-foreground hover:text-neon-cyan hover:border-neon-cyan font-bold tracking-[0.2em] text-xs rounded transition-all disabled:opacity-50"
               title="Reset input, logs, and error state"
             >
               <span>⌫</span>
               <span>CLEAR CONSOLE</span>
             </button>
 
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground w-full sm:w-auto">
               POST :: <span className="text-neon-cyan">{`{ "data": [...] }`}</span>
             </div>
           </div>
@@ -498,7 +798,7 @@ const Index = () => {
               <div className="text-[10px] text-muted-foreground mt-2">
                 // CHECK API_URL CONSTANT, NETWORK CONNECTION, AND INPUT FORMAT.
               </div>
-              <div className="mt-3 flex gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   onClick={handleRetry}
                   disabled={loading || validation.status !== "valid"}
@@ -522,10 +822,11 @@ const Index = () => {
       {data && !error && (
         <>
           {/* Action bar */}
-          <section className="mb-6 flex flex-wrap items-center gap-3">
+          <section className="mb-6 flex flex-wrap items-stretch sm:items-center gap-3">
             <button
               onClick={handleCopyJson}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-background/80 border border-neon-cyan text-neon-cyan text-glow-cyan font-bold tracking-[0.2em] text-xs rounded glow-cyan hover:bg-neon-cyan/10 transition-all"
+              aria-pressed={copied}
+              className="inline-flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-2 bg-background/80 border border-neon-cyan text-neon-cyan text-glow-cyan font-bold tracking-[0.2em] text-xs rounded glow-cyan hover:bg-neon-cyan/10 transition-all"
               title="Copy raw API response JSON to clipboard"
             >
               <span>{copied ? "✓" : "⎘"}</span>
@@ -533,7 +834,7 @@ const Index = () => {
             </button>
             <button
               onClick={toggleAllTrees}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-background/80 border border-border text-muted-foreground hover:text-neon-cyan hover:border-neon-cyan font-bold tracking-[0.2em] text-xs rounded transition-all"
+              className="inline-flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-2 bg-background/80 border border-border text-muted-foreground hover:text-neon-cyan hover:border-neon-cyan font-bold tracking-[0.2em] text-xs rounded transition-all"
               title="Collapse or expand all hierarchy trees"
             >
               <span>{allCollapsed ? "▸" : "▾"}</span>
@@ -541,7 +842,7 @@ const Index = () => {
             </button>
             <button
               onClick={handleClearConsole}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-background/80 border border-border text-muted-foreground hover:text-neon-red hover:border-neon-red font-bold tracking-[0.2em] text-xs rounded transition-all ml-auto"
+              className="inline-flex w-full sm:w-auto justify-center items-center gap-2 px-4 py-2 bg-background/80 border border-border text-muted-foreground hover:text-neon-red hover:border-neon-red font-bold tracking-[0.2em] text-xs rounded transition-all sm:ml-auto"
               title="Reset input, logs, and error state"
             >
               <span>⌫</span>
@@ -580,7 +881,7 @@ const Index = () => {
                 COUNT :: {(data.hierarchies?.length ?? 0).toString().padStart(2, "0")}
               </div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {(data.hierarchies ?? []).map((h, i) => (
                 <HierarchyCard
                   key={`${h.root}-${i}-${collapseSignal}-${allCollapsed ? "c" : "e"}`}
@@ -602,31 +903,53 @@ const Index = () => {
                 // SYSTEM LOGS
               </h2>
               <div className="flex-1 h-px bg-gradient-to-r from-neon-red/60 to-transparent" />
-              <div role="tablist" aria-label="Log filter" className="inline-flex rounded border border-border overflow-hidden text-[10px] tracking-[0.25em] font-bold">
-                {(["all", "invalid", "duplicate"] as const).map((f) => {
-                  const active = logFilter === f;
-                  const label =
-                    f === "all" ? "ALL" : f === "invalid" ? "INVALID" : "DUPLICATES";
-                  return (
-                    <button
-                      key={f}
-                      role="tab"
-                      aria-selected={active}
-                      onClick={() => setLogFilter(f)}
-                      className={`px-3 py-1.5 transition-colors ${
-                        active
-                          ? f === "invalid"
-                            ? "bg-neon-amber/20 text-neon-amber text-glow-amber"
-                            : f === "duplicate"
-                              ? "bg-neon-red/20 text-neon-red text-glow-red"
-                              : "bg-neon-cyan/20 text-neon-cyan text-glow-cyan"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+              <div className="w-full sm:w-auto flex flex-wrap items-center gap-2 sm:justify-end">
+                <div
+                  role="tablist"
+                  aria-label="Log filter"
+                  className="inline-flex rounded border border-border overflow-hidden text-[10px] tracking-[0.2em] font-bold whitespace-nowrap"
+                >
+                  {(["all", "invalid", "duplicate"] as const).map((f) => {
+                    const active = logFilter === f;
+                    const label =
+                      f === "all" ? "ALL" : f === "invalid" ? "INVALID" : "DUPLICATES";
+                    return (
+                      <button
+                        key={f}
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setLogFilter(f)}
+                        className={`px-3 py-1.5 transition-colors ${
+                          active
+                            ? f === "invalid"
+                              ? "bg-neon-amber/20 text-neon-amber text-glow-amber"
+                              : f === "duplicate"
+                                ? "bg-neon-red/20 text-neon-red text-glow-red"
+                                : "bg-neon-cyan/20 text-neon-cyan text-glow-cyan"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={() => handleDownloadLogs("json")}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-background/80 border border-neon-cyan text-neon-cyan text-glow-cyan font-bold tracking-[0.16em] text-[10px] rounded hover:bg-neon-cyan/10 transition-colors"
+                  title="Download currently filtered logs as JSON"
+                >
+                  <span>⇩</span>
+                  <span>DOWNLOAD .JSON</span>
+                </button>
+                <button
+                  onClick={() => handleDownloadLogs("txt")}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-background/80 border border-neon-amber text-neon-amber text-glow-amber font-bold tracking-[0.16em] text-[10px] rounded hover:bg-neon-amber/10 transition-colors"
+                  title="Download currently filtered logs as TXT"
+                >
+                  <span>⇩</span>
+                  <span>DOWNLOAD .TXT</span>
+                </button>
               </div>
             </div>
             <div
@@ -637,14 +960,14 @@ const Index = () => {
               {(logFilter === "all" || logFilter === "invalid") && (
                 <LogPanel
                   title="INVALID_ENTRIES"
-                  items={data.invalid_entries ?? []}
+                  items={filteredInvalidEntries}
                   tone="amber"
                 />
               )}
               {(logFilter === "all" || logFilter === "duplicate") && (
                 <LogPanel
                   title="DUPLICATE_EDGES"
-                  items={data.duplicate_edges ?? []}
+                  items={filteredDuplicateEdges}
                   tone="red"
                 />
               )}

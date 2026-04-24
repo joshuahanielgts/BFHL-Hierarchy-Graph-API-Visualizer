@@ -253,3 +253,19 @@ All colors MUST be HSL.
       0 0 28px hsl(var(--neon-red) / 0.85);
   }
 }
+
+@media (max-width: 1024px) {
+  body {
+    background-attachment: scroll;
+  }
+}
+
+@media (max-width: 768px) {
+  body {
+    background-size: 100% 100%, 100% 100%, 24px 24px, 24px 24px;
+  }
+
+  body::before {
+    opacity: 0.75;
+  }
+}
