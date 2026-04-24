@@ -171,12 +171,20 @@ function LogPanel({
   );
 }
 
-function HierarchyCard({ h, index }: { h: Hierarchy; index: number }) {
+function HierarchyCard({
+  h,
+  index,
+  initialCollapsed = false,
+}: {
+  h: Hierarchy;
+  index: number;
+  initialCollapsed?: boolean;
+}) {
   const ascii = useMemo(
     () => buildAsciiTree({ [h.root]: h.tree as Record<string, unknown> }),
     [h],
   );
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
   const lineCount = ascii ? ascii.split("\n").filter(Boolean).length : 0;
 
   return (
