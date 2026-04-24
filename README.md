@@ -10,7 +10,6 @@
 |---|---|---|
 | 🖥️ Frontend Dashboard | Vercel | [bfhl-hierarchy-graph-api-visualizer.vercel.app](https://bfhl-hierarchy-graph-api-visualizer.vercel.app) |
 | ⚙️ Backend REST API | Render | [bfhl-hierarchy-graph-api-visualizer.onrender.com](https://bfhl-hierarchy-graph-api-visualizer.onrender.com) |
-| 📦 GitHub (Original) | GitHub | [BFHL-Hierarchy-Graph-API-Visualizer](https://github.com/joshuahanielgts/BFHL-Hierarchy-Graph-API-Visualizer) |
 | 📦 GitHub (Rebranded) | GitHub | [Synapse_Parser](https://github.com/joshuahanielgts/Synapse_Parser) |
 
 ---
